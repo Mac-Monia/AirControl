@@ -34,7 +34,7 @@ The project is being developed step by step, with a focus on understanding the u
 1. Clone the repository:
 
    ```bash
-   git clone YOUR_REPOSITORY_URL
+   git clone https://github.com/Mac-Monia/AirControl.git
    cd AirControl
    ```
 
