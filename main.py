@@ -1,172 +1,230 @@
 
-import pyautogui
 import cv2
 import mediapipe as mp
+import pyautogui
+import math
+import time
 
-# Terminal output filtering
-MOVEMENT_THRESHOLD = 0.02
-previous_x = None
-previous_y = None
 
-# Higher alpha = more responsive cursor
-SMOOTHING = 0.5
-smooth_x = None
-smooth_y = None
+# ---------------- CONFIGURATION ----------------
 
-# Webcam control region (normalized coordinates)
-FRAME_MARGIN_X = 0.10
-FRAME_MARGIN_Y = 0.10
-
-# Mouse setup
 pyautogui.FAILSAFE = True
-screen_width, screen_height = pyautogui.size()
+pyautogui.PAUSE = 0
 
-# Initialize MediaPipe
+SCREEN_W, SCREEN_H = pyautogui.size()
+
+# Cursor tuning
+SMOOTHING = 0.18
+DEAD_ZONE = 3.0
+
+# Pinch tuning: distance relative to palm width
+PINCH_START = 0.40
+PINCH_RELEASE = 0.55
+
+# Require a short, stable gesture
+PINCH_FRAMES_REQUIRED = 2
+RELEASE_FRAMES_REQUIRED = 2
+CLICK_COOLDOWN = 0.35
+
+# ---------------- STATE ----------------
+
+cursor_x = None
+cursor_y = None
+
+pinch_frames = 0
+release_frames = 0
+pinching = False
+click_armed = True
+last_click_time = 0.0
+
+# ---------------- HELPERS ----------------
+
+def clamp(value, low, high):
+    return max(low, min(value, high))
+
+
+def landmark_distance(a, b):
+    return math.hypot(a.x - b.x, a.y - b.y)
+
+
+def move_cursor(index_tip):
+    global cursor_x, cursor_y
+
+    # Map the fingertip to the full screen.
+    target_x = index_tip.x * (SCREEN_W - 1)
+    target_y = index_tip.y * (SCREEN_H - 1)
+
+    if cursor_x is None:
+        cursor_x = target_x
+        cursor_y = target_y
+    else:
+        dx = target_x - cursor_x
+        dy = target_y - cursor_y
+
+        # Ignore small changes caused by landmark noise.
+        if math.hypot(dx, dy) >= DEAD_ZONE:
+            cursor_x += SMOOTHING * dx
+            cursor_y += SMOOTHING * dy
+
+    pyautogui.moveTo(
+        round(clamp(cursor_x, 0, SCREEN_W - 1)),
+        round(clamp(cursor_y, 0, SCREEN_H - 1))
+    )
+
+
+def detect_click(ratio, now):
+    global pinch_frames, release_frames
+    global pinching, click_armed, last_click_time
+
+    # Different thresholds prevent rapid state switching.
+    if pinching:
+        pinch_detected = ratio < PINCH_RELEASE
+    else:
+        pinch_detected = ratio < PINCH_START
+
+    if pinch_detected:
+        pinch_frames += 1
+        release_frames = 0
+    else:
+        release_frames += 1
+        pinch_frames = 0
+
+    # Confirm the pinch before clicking.
+    if not pinching and pinch_frames >= PINCH_FRAMES_REQUIRED:
+        pinching = True
+
+        if click_armed and now - last_click_time >= CLICK_COOLDOWN:
+            pyautogui.click()
+            last_click_time = now
+            click_armed = False
+            print("CLICK")
+
+    # A deliberate release enables the next click.
+    if pinching and release_frames >= RELEASE_FRAMES_REQUIRED:
+        pinching = False
+        click_armed = True
+
+
+# ---------------- CAMERA ----------------
+
 mp_hands = mp.solutions.hands
 mp_draw = mp.solutions.drawing_utils
 
-hands = mp_hands.Hands(
-    static_image_mode=False,
-    max_num_hands=1,
-    model_complexity=0,
-    min_detection_confidence=0.6,
-    min_tracking_confidence=0.6,
-)
-
-# Open webcam
 camera = cv2.VideoCapture(0)
 
-# Request a modest resolution to reduce processing load
-camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-
 if not camera.isOpened():
-    raise RuntimeError(
-        "Could not open webcam. Check camera permissions "
-        "and whether another app is using the camera."
-    )
-
-print("AirControl started. Press Q to quit.")
+    raise SystemExit("Cannot open webcam.")
 
 try:
-    while True:
-        success, frame = camera.read()
+    with mp_hands.Hands(
+        max_num_hands=1,
+        model_complexity=0,
+        min_detection_confidence=0.6,
+        min_tracking_confidence=0.7
+    ) as hands:
 
-        if not success:
-            print("Could not read a webcam frame.")
-            break
+        while True:
+            ok, frame = camera.read()
 
-        # Mirror the webcam image
-        frame = cv2.flip(frame, 1)
+            if not ok:
+                break
 
-        # Convert BGR to RGB for MediaPipe
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame = cv2.flip(frame, 1)
+            height, width = frame.shape[:2]
 
-        # Avoid unnecessary image copies during processing
-        rgb_frame.flags.writeable = False
-        results = hands.process(rgb_frame)
-        rgb_frame.flags.writeable = True
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = hands.process(rgb)
 
-        hand_detected = results.multi_hand_landmarks is not None
+            status = "Show hand"
+            ratio_text = "Pinch ratio: --"
+            color = (255, 255, 255)
 
-        if hand_detected:
-            hand_landmarks = results.multi_hand_landmarks[0]
+            if results.multi_hand_landmarks:
+                hand = results.multi_hand_landmarks[0]
+                points = hand.landmark
 
-            mp_draw.draw_landmarks(
-                frame,
-                hand_landmarks,
-                mp_hands.HAND_CONNECTIONS,
+                mp_draw.draw_landmarks(
+                    frame, hand, mp_hands.HAND_CONNECTIONS
+                )
+
+                # 1. Cursor movement
+                index_tip = points[8]
+                move_cursor(index_tip)
+
+                # 2. Pinch detection
+                thumb_tip = points[4]
+
+                # Width across the palm.
+                palm_width = landmark_distance(
+                    points[5], points[17]
+                )
+
+                pinch_distance = landmark_distance(
+                    thumb_tip, index_tip
+                )
+
+                if palm_width > 0.001:
+                    ratio = pinch_distance / palm_width
+
+                    detect_click(ratio, time.monotonic())
+
+                    ratio_text = f"Pinch ratio: {ratio:.2f}"
+
+                    if pinching:
+                        status = "PINCH"
+                        color = (0, 255, 0)
+                    else:
+                        status = "MOVING"
+                        color = (0, 165, 255)
+
+                    if ratio < PINCH_START:
+                        cv2.circle(
+                            frame,
+                            (
+                                int(index_tip.x * width),
+                                int(index_tip.y * height)
+                            ),
+                            12, color, 2
+                        )
+
+                else:
+                    status = "Adjust hand position"
+
+            else:
+                # Reset the cursor filter after tracking is lost.
+                cursor_x = None
+                cursor_y = None
+                pinch_frames = 0
+                release_frames = 0
+                pinching = False
+                click_armed = True
+
+            cv2.putText(
+                frame, status, (20, 35),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2
             )
 
-            # Read the index fingertip (landmark 8)
-            raw_x = hand_landmarks.landmark[8].x
-            raw_y = hand_landmarks.landmark[8].y
+            cv2.putText(
+                frame, ratio_text, (20, 70),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65,
+                (255, 255, 255), 2
+            )
 
-            # Print only meaningful raw-coordinate changes
-            if previous_x is None:
-                print(
-                    f"Index fingertip: "
-                    f"x={raw_x:.3f}, y={raw_y:.3f}"
-                )
-                previous_x = raw_x
-                previous_y = raw_y
+            cv2.putText(
+                frame, "Q = quit", (20, height - 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                (255, 255, 255), 1
+            )
 
-            else:
-                movement = (
-                    (raw_x - previous_x) ** 2
-                    + (raw_y - previous_y) ** 2
-                ) ** 0.5
+            cv2.imshow("AirControl", frame)
 
-                if movement >= MOVEMENT_THRESHOLD:
-                    print(
-                        f"Index fingertip: "
-                        f"x={raw_x:.3f}, y={raw_y:.3f}"
-                    )
-                    previous_x = raw_x
-                    previous_y = raw_y
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
 
-            # Smooth the fingertip position
-            if smooth_x is None:
-                smooth_x = raw_x
-                smooth_y = raw_y
-            else:
-                smooth_x = (
-                    SMOOTHING * raw_x
-                    + (1 - SMOOTHING) * smooth_x
-                )
-                smooth_y = (
-                    SMOOTHING * raw_y
-                    + (1 - SMOOTHING) * smooth_y
-                )
-
-            # Restrict movement to the control region
-            mapped_x = (smooth_x - FRAME_MARGIN_X) / (1 - 2 * FRAME_MARGIN_X)
-            mapped_y = (smooth_y - FRAME_MARGIN_Y) / (1 - 2 * FRAME_MARGIN_Y)
-
-            # Keep mapped coordinates between 0 and 1
-            mapped_x = max(0.0, min(mapped_x, 1.0))
-            mapped_y = max(0.0, min(mapped_y, 1.0))
-
-            # Convert to screen pixels
-            screen_x = int(mapped_x * (screen_width - 1))
-            screen_y = int(mapped_y * (screen_height - 1))
-
-            # Keep the cursor inside the screen
-            screen_x = max(0, min(screen_x, screen_width - 1))
-            screen_y = max(0, min(screen_y, screen_height - 1))
-
-            # Move the cursor immediately
-            pyautogui.moveTo(screen_x, screen_y, duration=0)
-
-            status = "HAND DETECTED"
-
-        else:
-            status = "NO HAND DETECTED"
-
-            # Reset tracking state when the hand disappears
-            smooth_x = None
-            smooth_y = None
-            previous_x = None
-            previous_y = None
-
-        # Display tracking status
-        cv2.putText(
-            frame,
-            status,
-            (20, 40),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.9,
-            (0, 255, 0) if hand_detected else (0, 0, 255),
-            2,
-        )
-
-        cv2.imshow("AirControl - Hand Tracking", frame)
-
-        # Press Q to quit
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+except pyautogui.FailSafeException:
+    print("Emergency stop triggered.")
 
 finally:
     camera.release()
-    hands.close()
     cv2.destroyAllWindows()
+    print("AirControl stopped.")
