@@ -1,91 +1,157 @@
 # AirControl
 
-AirControl is a Python-based computer vision project that explores hands-free computer interaction by tracking hand movements through a webcam and translating index-fingertip movement into cursor movement.
+AirControl is a Python-based hand-tracking project that lets you control your computer's mouse cursor using hand gestures captured through a webcam.
 
-The project is being developed step by step, with a focus on understanding the underlying concepts rather than simply assembling code.
+The project uses MediaPipe for real-time hand landmark detection, OpenCV for webcam processing and visualization, and PyAutoGUI for mouse control.
 
 ## Features
 
-- Real-time hand landmark detection using MediaPipe
-- Index-fingertip tracking
-- Webcam coordinate-to-screen coordinate mapping
-- Cursor smoothing to reduce jitter
-- Mouse control using PyAutoGUI
-- Keyboard exit and PyAutoGUI fail-safe protection
+- **Real-Time Hand Tracking:** Detects hand landmarks using a webcam.
+- **Gesture-Based Cursor Control:** Moves the mouse cursor using the index fingertip.
+- **Cursor Smoothing:** Applies exponential smoothing to reduce unwanted cursor movement.
+- **Dead-Zone Filtering:** Ignores small movements to help reduce jitter.
+- **Pinch-to-Click:** Simulates a mouse click when the thumb and index fingertip come together.
+- **Click Stabilization:** Uses consecutive-frame confirmation and separate pinch and release thresholds to reduce accidental clicks.
+- **Visual Feedback:** Displays hand landmarks, pinch status, and tracking information in a live camera window.
+- **Emergency Fail-Safe:** Keeps PyAutoGUI's fail-safe enabled.
 
-## Tech Stack
+## Technologies
 
-- **Python** — application logic
-- **OpenCV** — webcam capture and image processing
-- **MediaPipe** — hand landmark detection
-- **PyAutoGUI** — operating-system cursor control
-
-## Getting Started
-
-### Prerequisites
-
-- Windows
 - Python
-- Git
-- A working webcam
+- OpenCV
+- MediaPipe
+- PyAutoGUI
 
-### Installation
+## Prerequisites
 
-1. Clone the repository:
+Before running AirControl, make sure you have:
 
-   ```bash
-   git clone https://github.com/Mac-Monia/AirControl.git
-   cd AirControl
-   ```
+- Python installed.
+- A working webcam.
+- A desktop environment that supports mouse control.
+- Git installed if you want to clone the repository.
 
-2. Create a virtual environment:
+## Installation
 
-   ```bash
-   python -m venv .venv
-   ```
+### 1. Clone the repository
 
-3. Activate the environment in PowerShell:
+```bash
+git clone https://github.com/Mac-Monia/AirControl.git
+cd AirControl
+```
 
-   ```powershell
-   .\.venv\Scripts\Activate.ps1
-   ```
+### 2. Create a virtual environment
 
-4. Install the required packages:
+On Windows:
 
-   ```bash
-   python -m pip install mediapipe==0.10.21 opencv-contrib-python==4.11.0.86 pyautogui
-   ```
+```powershell
+python -m venv .venv
+```
 
-5. Start the application:
+### 3. Activate the virtual environment
 
-   ```bash
-   python main.py
-   ```
+```powershell
+.venv\Scripts\Activate.ps1
+```
 
-Press **Q** while the webcam window is focused to exit.
+If PowerShell blocks activation, you can use Command Prompt instead:
 
-## How It Works
+```bat
+.venv\Scripts\activate.bat
+```
 
-1. OpenCV captures frames from the webcam.
-2. The frame is mirrored and converted from BGR to RGB.
-3. MediaPipe detects hand landmarks.
-4. AirControl reads the index-fingertip coordinates.
-5. Smoothing reduces rapid changes in fingertip position.
-6. The coordinates are mapped to screen pixels.
-7. PyAutoGUI moves the computer cursor.
+### 4. Install the dependencies
 
-## Roadmap
+```bash
+python -m pip install opencv-python mediapipe pyautogui
+```
 
-- [ ] Improve cursor calibration and sensitivity
-- [ ] Display the control region in the webcam window
-- [ ] Implement pinch-to-click
-- [ ] Add more hand gesture controls
+## Usage
 
+### 1. Start AirControl
+
+From the project directory, run:
+
+```bash
+python main.py
+```
+
+### 2. Control the cursor
+
+Position your hand in front of the webcam.
+
+- Move your index fingertip to move the mouse cursor.
+- Bring your thumb and index fingertip together to trigger a mouse click.
+- Release the pinch before performing another click.
+
+### 3. Exit the application
+
+Press `Q` while the camera window is active.
+
+## Configuration
+
+AirControl's behavior can be adjusted by changing the configuration constants in `air_control.py`.
+
+| Parameter                 | Description                                                     |
+| ------------------------- | --------------------------------------------------------------- |
+| `SMOOTHING`               | Controls how quickly the cursor follows the detected fingertip. |
+| `DEAD_ZONE`               | Ignores small cursor-position changes.                          |
+| `PINCH_START`             | Determines the threshold for starting a pinch gesture.          |
+| `PINCH_RELEASE`           | Determines the threshold for releasing a pinch.                 |
+| `PINCH_FRAMES_REQUIRED`   | Sets how many consecutive frames are needed to confirm a pinch. |
+| `RELEASE_FRAMES_REQUIRED` | Sets how many consecutive frames are needed to confirm release. |
+| `CLICK_COOLDOWN`          | Sets the minimum interval between mouse clicks.                 |
+
+### Tuning tips
+
+- If the cursor is too shaky, experiment with a smaller `SMOOTHING` value.
+- If the cursor feels slow, increase `SMOOTHING gradually`.
+- If small hand movements move the cursor too much, increase `DEAD_ZONE` slightly.
+- If pinching does not trigger a click, inspect the displayed pinch ratio and adjust the pinch thresholds.
+- If accidental clicks occur, lower `PINCH_START` and test again.
+
+Change one parameter at a time and test under consistent lighting and camera positioning.
 
 ## Safety
 
-AirControl moves the real system cursor. Keep PyAutoGUI's fail-safe enabled and test cursor movement carefully. Move the cursor to the top-left corner of the screen to trigger the fail-safe. Press Q in the webcam window to exit normally.
+AirControl controls your actual mouse, so use it carefully.
 
-## Project Status
+- Keep `pyautogui.FAILSAFE = True`.
+- Moving the cursor to the top-left corner of the screen can trigger PyAutoGUI's emergency fail-safe.
+- Avoid running the application while performing sensitive operations.
+- Close the application when you are finished testing.
 
-This project is under active development. Features listed in the roadmap have not necessarily been implemented yet.
+## Project Structure
+
+```text
+AirControl/
+├── .venv/             # Local virtual environment (not committed)
+├── main.py     # Main hand-tracking and mouse-control logic
+├── README.md          # Project documentation
+└── .gitignore         # Files excluded from Git
+```
+
+The exact files in your repository may differ as development continues.
+
+## Current Status
+
+AirControl is under active development. Current work focuses on improving cursor stability, reducing tracking jitter, and making pinch-to-click interactions more reliable.
+
+## Future Improvements
+
+- More advanced cursor filtering, such as a One Euro filter.
+- Cursor calibration and configurable sensitivity.
+- Improved pinch detection and click reliability.
+- Gesture-based scrolling and dragging.
+- Support for additional hand gestures.
+- Performance and usability improvements.
+
+## Contributing
+
+Contributions, suggestions, and bug reports are welcome.
+
+If you want to improve AirControl, consider testing cursor accuracy, measuring click reliability, or improving the hand-tracking pipeline.
+
+## License
+
+No license has been specified yet.
