@@ -8,9 +8,11 @@ The project uses MediaPipe for real-time hand landmark detection, OpenCV for web
 
 - **Real-Time Hand Tracking:** Detects hand landmarks using a webcam.
 - **Gesture-Based Cursor Control:** Moves the mouse cursor using the index fingertip.
-- **Cursor Smoothing:** Applies exponential smoothing to reduce unwanted cursor movement.
-- **Dead-Zone Filtering:** Ignores small movements to help reduce jitter.
-- **Pinch-to-Click:** Simulates a mouse click when the thumb and index fingertip come together.
+- **Adaptive Cursor Smoothing:** Uses a One Euro filter: steady when your hand is still, responsive when it moves fast.
+- **Active Region Mapping:** Maps an inner area of the camera frame to the full screen so edges are easy to reach.
+- **Click Aim Lock:** Freezes the cursor as your fingers close so clicks land where you aimed.
+- **Pinch-to-Click:** Simulates a mouse click when the thumb and index fingertip come together, measured in 3D relative to hand size.
+- **Peace-Sign Scrolling:** Raise your index and middle fingers (ring and pinky folded) and move your hand up or down to scroll.
 - **Click Stabilization:** Uses consecutive-frame confirmation and separate pinch and release thresholds to reduce accidental clicks.
 - **Visual Feedback:** Displays hand landmarks, pinch status, and tracking information in a live camera window.
 - **Emergency Fail-Safe:** Keeps PyAutoGUI's fail-safe enabled.
@@ -83,6 +85,7 @@ Position your hand in front of the webcam.
 - Move your index fingertip to move the mouse cursor.
 - Bring your thumb and index fingertip together to trigger a mouse click.
 - Release the pinch before performing another click.
+- Make a peace sign (index and middle fingers up) and move your hand up or down to scroll. The cursor stays still while scrolling.
 
 ### 3. Exit the application
 
@@ -90,23 +93,30 @@ Press `Q` while the camera window is active.
 
 ## Configuration
 
-AirControl's behavior can be adjusted by changing the configuration constants in `air_control.py`.
+AirControl's behavior can be adjusted by changing the configuration constants in `main.py`.
 
 | Parameter                 | Description                                                     |
 | ------------------------- | --------------------------------------------------------------- |
-| `SMOOTHING`               | Controls how quickly the cursor follows the detected fingertip. |
-| `DEAD_ZONE`               | Ignores small cursor-position changes.                          |
+| `FRAME_MARGIN_X/Y`        | Size of the frame border excluded from screen mapping.          |
+| `MIN_CUTOFF`              | Smoothing when the hand is still (lower = less jitter).         |
+| `BETA`                    | Responsiveness during fast movement (higher = less lag).        |
+| `FREEZE_RATIO`            | Pinch ratio below which the cursor stops moving to aim a click. |
 | `PINCH_START`             | Determines the threshold for starting a pinch gesture.          |
 | `PINCH_RELEASE`           | Determines the threshold for releasing a pinch.                 |
 | `PINCH_FRAMES_REQUIRED`   | Sets how many consecutive frames are needed to confirm a pinch. |
 | `RELEASE_FRAMES_REQUIRED` | Sets how many consecutive frames are needed to confirm release. |
 | `CLICK_COOLDOWN`          | Sets the minimum interval between mouse clicks.                 |
+| `SCROLL_SPEED`            | How far the page scrolls per hand movement.                     |
+| `SCROLL_DEAD_ZONE`        | Ignores small hand movements while scrolling.                   |
+| `SCROLL_INVERT`           | Reverses the scroll direction.                                  |
+| `FINGER_EXTENDED_RATIO`   | How straight a finger must be to count as raised.               |
 
 ### Tuning tips
 
-- If the cursor is too shaky, experiment with a smaller `SMOOTHING` value.
-- If the cursor feels slow, increase `SMOOTHING gradually`.
-- If small hand movements move the cursor too much, increase `DEAD_ZONE` slightly.
+- If the cursor is shaky while your hand is still, lower `MIN_CUTOFF`.
+- If the cursor lags behind fast movements, increase `BETA` gradually.
+- If you can't reach the screen edges, increase `FRAME_MARGIN_X/Y`; if the cursor is too sensitive, decrease them.
+- If the cursor stops too early before a click, lower `FREEZE_RATIO` (keep it above `PINCH_START`).
 - If pinching does not trigger a click, inspect the displayed pinch ratio and adjust the pinch thresholds.
 - If accidental clicks occur, lower `PINCH_START` and test again.
 
@@ -126,7 +136,7 @@ AirControl controls your actual mouse, so use it carefully.
 ```text
 AirControl/
 ├── .venv/             # Local virtual environment (not committed)
-├── main.py     # Main hand-tracking and mouse-control logic
+├── main.py            # Main hand-tracking and mouse-control logic
 ├── README.md          # Project documentation
 └── .gitignore         # Files excluded from Git
 ```
@@ -139,10 +149,9 @@ AirControl is under active development. Current work focuses on improving cursor
 
 ## Future Improvements
 
-- More advanced cursor filtering, such as a One Euro filter.
 - Cursor calibration and configurable sensitivity.
 - Improved pinch detection and click reliability.
-- Gesture-based scrolling and dragging.
+- Gesture-based dragging.
 - Support for additional hand gestures.
 - Performance and usability improvements.
 
