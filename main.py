@@ -4,6 +4,10 @@ import mediapipe as mp
 import pyautogui
 import math
 import time
+import json
+import os
+import threading
+import statistics
 
 
 # ---------------- CONFIGURATION ----------------
@@ -17,6 +21,11 @@ SCREEN_W, SCREEN_H = pyautogui.size()
 CAMERA_INDEX = 0
 CAMERA_W = 640
 CAMERA_H = 480
+CAMERA_FPS = 30
+
+# 1 = more accurate landmarks, 0 = faster (use 0 if the FPS shown
+# on screen is below about 20)
+MODEL_COMPLEXITY = 1
 
 # Only this inner part of the camera frame is mapped to the screen,
 # so the screen edges are reachable without the hand leaving the view.
@@ -33,6 +42,12 @@ SCREEN_EDGE_PADDING = 2
 MIN_CUTOFF = 0.6
 BETA = 0.007
 DERIVATIVE_CUTOFF = 1.0
+
+# The cursor is moved on its own thread at this rate, gliding between
+# camera frames so motion stays smooth even at low camera FPS.
+CURSOR_RATE = 120
+# Seconds for the cursor to cover most of the gap to its target
+CURSOR_GLIDE = 0.04
 
 # Pinch tuning: 3D distance relative to hand size
 PINCH_START = 0.22
@@ -58,6 +73,41 @@ SCROLL_INVERT = False
 # A fingertip this much farther from the wrist than its middle joint
 # counts as extended.
 FINGER_EXTENDED_RATIO = 1.15
+
+# Drag and drop: open palm to get ready, close fist to grab,
+# open palm again to drop.
+GRAB_FRAMES_REQUIRED = 3
+# Frames of an unrelated gesture before "ready" is cancelled; long
+# enough to cover the in-between frames while the fist closes.
+READY_EXIT_FRAMES = 15
+
+# Landmarks the cursor can follow
+INDEX_TIP = 8
+PALM_CENTER = 9
+# How fast the cursor eases back to the fingertip after following the palm
+OFFSET_DECAY = 0.85
+
+# Frames without a hand before tracking is reset; avoids dropping a
+# drag on a single missed detection.
+TRACKING_LOST_FRAMES = 5
+
+# Pinch calibration (press C): measures your hand and overrides the
+# pinch thresholds above. Results are saved next to this script.
+CALIBRATION_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "calibration.json"
+)
+CALIBRATION_STEPS = (
+    ("open", "Point with index finger, thumb relaxed"),
+    ("pinch", "Pinch thumb and index together"),
+)
+# Seconds per step; the first part of each step is ignored while
+# the hand settles.
+CALIBRATION_STEP_TIME = 2.5
+CALIBRATION_SETTLE_TIME = 1.0
+# Where each threshold sits between your pinched (0) and open (1) ratio
+CALIBRATION_START = 0.30
+CALIBRATION_FREEZE = 0.45
+CALIBRATION_RELEASE = 0.55
 
 # ---------------- FILTER ----------------
 
@@ -99,11 +149,70 @@ class OneEuroFilter:
         self.value += a * (x - self.value)
         return self.value
 
+
+class CursorMover(threading.Thread):
+    """Glides the OS cursor toward the latest target at a steady rate."""
+
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.lock = threading.Lock()
+        self.target = None
+        self.running = True
+        self.failsafe = False
+
+    def set_target(self, x, y):
+        with self.lock:
+            self.target = (x, y)
+
+    def stop(self):
+        self.running = False
+
+    def run(self):
+        current = None
+        last_position = None
+        last_time = time.monotonic()
+
+        try:
+            while self.running:
+                now = time.monotonic()
+                dt = now - last_time
+                last_time = now
+
+                with self.lock:
+                    target = self.target
+
+                if target is not None:
+                    if current is None:
+                        current = pyautogui.position()
+
+                    # Frame-rate independent easing toward the target.
+                    a = 1.0 - math.exp(-dt / CURSOR_GLIDE)
+                    current = (
+                        current[0] + a * (target[0] - current[0]),
+                        current[1] + a * (target[1] - current[1])
+                    )
+
+                    position = (round(current[0]), round(current[1]))
+
+                    # Skip redundant OS calls when the cursor has not moved.
+                    if position != last_position:
+                        pyautogui.moveTo(*position)
+                        last_position = position
+
+                time.sleep(1.0 / CURSOR_RATE)
+
+        except pyautogui.FailSafeException:
+            self.failsafe = True
+
 # ---------------- STATE ----------------
 
 filter_x = OneEuroFilter(MIN_CUTOFF, BETA, DERIVATIVE_CUTOFF)
 filter_y = OneEuroFilter(MIN_CUTOFF, BETA, DERIVATIVE_CUTOFF)
-last_cursor = None
+cursor_mover = CursorMover()
+tracking_landmark = None
+offset_x = 0.0
+offset_y = 0.0
+lost_frames = 0
 
 pinch_frames = 0
 release_frames = 0
@@ -115,6 +224,16 @@ scroll_frames = 0
 scrolling = False
 scroll_anchor_y = None
 scroll_remainder = 0.0
+
+grab_state = "idle"  # "idle", "ready" or "dragging"
+grab_pending = None
+grab_frames = 0
+
+calibration_step = None  # index into CALIBRATION_STEPS while running
+calibration_step_start = 0.0
+calibration_samples = {}
+calibration_message = ""
+calibration_message_until = 0.0
 
 # ---------------- HELPERS ----------------
 
@@ -139,38 +258,67 @@ def map_to_screen(value, margin, size):
     return normalized * (size - 1)
 
 
-def move_cursor(index_tip, now):
-    global last_cursor
+def move_cursor(points, landmark, now):
+    global tracking_landmark, offset_x, offset_y
 
-    target_x = map_to_screen(index_tip.x, FRAME_MARGIN_X, SCREEN_W)
-    target_y = map_to_screen(index_tip.y, FRAME_MARGIN_Y, SCREEN_H)
+    point = points[landmark]
+    target_x = map_to_screen(point.x, FRAME_MARGIN_X, SCREEN_W)
+    target_y = map_to_screen(point.y, FRAME_MARGIN_Y, SCREEN_H)
 
-    x = filter_x(target_x, now)
-    y = filter_y(target_y, now)
+    if landmark != tracking_landmark and filter_x.value is not None:
+        # Switching tracking points: start from the current cursor
+        # position so it does not jump.
+        offset_x = filter_x.value - target_x
+        offset_y = filter_y.value - target_y
+    elif landmark == INDEX_TIP:
+        # Ease back to the fingertip's own position while pointing.
+        offset_x *= OFFSET_DECAY
+        offset_y *= OFFSET_DECAY
 
-    position = (
-        round(clamp(x, SCREEN_EDGE_PADDING, SCREEN_W - 1 - SCREEN_EDGE_PADDING)),
-        round(clamp(y, SCREEN_EDGE_PADDING, SCREEN_H - 1 - SCREEN_EDGE_PADDING))
+    tracking_landmark = landmark
+
+    x = filter_x(target_x + offset_x, now)
+    y = filter_y(target_y + offset_y, now)
+
+    cursor_mover.set_target(
+        clamp(x, SCREEN_EDGE_PADDING, SCREEN_W - 1 - SCREEN_EDGE_PADDING),
+        clamp(y, SCREEN_EDGE_PADDING, SCREEN_H - 1 - SCREEN_EDGE_PADDING)
     )
-
-    # Skip redundant OS calls when the cursor has not moved.
-    if position != last_cursor:
-        pyautogui.moveTo(*position)
-        last_cursor = position
 
 
 def reset_tracking():
-    global last_cursor
-    global pinch_frames, release_frames, pinching, click_armed
+    global tracking_landmark, offset_x, offset_y
 
     filter_x.reset()
     filter_y.reset()
-    last_cursor = None
+    tracking_landmark = None
+    offset_x = 0.0
+    offset_y = 0.0
+    reset_click()
+    reset_scroll()
+    reset_grab()
+
+
+def reset_click():
+    global pinch_frames, release_frames, pinching, click_armed
+
     pinch_frames = 0
     release_frames = 0
     pinching = False
     click_armed = True
-    reset_scroll()
+
+
+def reset_grab():
+    global grab_state, grab_pending, grab_frames
+
+    # Never leave the mouse button stuck down.
+    if grab_state == "dragging":
+        pyautogui.mouseUp()
+        print("DROP")
+
+    grab_state = "idle"
+    grab_pending = None
+    grab_frames = 0
 
 
 def reset_scroll():
@@ -206,6 +354,63 @@ def is_peace_sign(points, width, height):
         and finger_folded(points, 16, 14, width, height)
         and finger_folded(points, 20, 18, width, height)
     )
+
+
+def is_open_palm(points, width, height):
+    return all(
+        finger_extended(points, tip, pip, width, height)
+        for tip, pip in ((8, 6), (12, 10), (16, 14), (20, 18))
+    )
+
+
+def is_fist(points, width, height):
+    return all(
+        finger_folded(points, tip, pip, width, height)
+        for tip, pip in ((8, 6), (12, 10), (16, 14), (20, 18))
+    )
+
+
+def update_grab(gesture):
+    global grab_state, grab_pending, grab_frames
+
+    # Work out which state this gesture leads to, and how many
+    # frames it must be held first.
+    target = None
+    needed = GRAB_FRAMES_REQUIRED
+
+    if grab_state == "idle":
+        if gesture == "palm":
+            target = "ready"
+    elif grab_state == "ready":
+        if gesture == "fist":
+            target = "dragging"
+        elif gesture != "palm":
+            target = "idle"
+            needed = READY_EXIT_FRAMES
+    elif gesture == "palm":
+        target = "ready"
+
+    if target != grab_pending:
+        grab_pending = target
+        grab_frames = 0
+
+    if target is None:
+        return
+
+    grab_frames += 1
+    if grab_frames < needed:
+        return
+
+    if target == "dragging":
+        pyautogui.mouseDown()
+        print("GRAB")
+    elif grab_state == "dragging":
+        pyautogui.mouseUp()
+        print("DROP")
+
+    grab_state = target
+    grab_pending = None
+    grab_frames = 0
 
 
 def update_scroll_mode(peace):
@@ -253,6 +458,94 @@ def scroll_with(points):
         pyautogui.scroll(clicks)
 
 
+def apply_calibration(open_ratio, pinch_ratio):
+    global PINCH_START, PINCH_RELEASE, FREEZE_RATIO
+
+    gap = open_ratio - pinch_ratio
+    PINCH_START = pinch_ratio + CALIBRATION_START * gap
+    FREEZE_RATIO = pinch_ratio + CALIBRATION_FREEZE * gap
+    PINCH_RELEASE = pinch_ratio + CALIBRATION_RELEASE * gap
+
+
+def load_calibration():
+    try:
+        with open(CALIBRATION_FILE) as file:
+            data = json.load(file)
+        apply_calibration(float(data["open"]), float(data["pinch"]))
+        print(
+            f"Loaded calibration: pinch below {PINCH_START:.2f}, "
+            f"release above {PINCH_RELEASE:.2f}"
+        )
+    except FileNotFoundError:
+        pass
+    except (ValueError, KeyError, TypeError):
+        print("Ignoring invalid calibration file.")
+
+
+def start_calibration(now):
+    global calibration_step, calibration_step_start, calibration_samples
+
+    calibration_step = 0
+    calibration_step_start = now
+    calibration_samples = {name: [] for name, _ in CALIBRATION_STEPS}
+
+
+def show_message(text, now, seconds=3.0):
+    global calibration_message, calibration_message_until
+
+    calibration_message = text
+    calibration_message_until = now + seconds
+    print(text)
+
+
+def update_calibration(ratio, now):
+    global calibration_step, calibration_step_start
+
+    name, instruction = CALIBRATION_STEPS[calibration_step]
+    elapsed = now - calibration_step_start
+
+    # Only sample once the hand has settled into the pose.
+    if ratio is not None and elapsed >= CALIBRATION_SETTLE_TIME:
+        calibration_samples[name].append(ratio)
+
+    if elapsed >= CALIBRATION_STEP_TIME:
+        calibration_step += 1
+        calibration_step_start = now
+
+        if calibration_step == len(CALIBRATION_STEPS):
+            calibration_step = None
+            finish_calibration(now)
+            return None
+
+    remaining = CALIBRATION_STEP_TIME - elapsed
+    return f"CALIBRATE: {instruction} ({remaining:.0f}s)"
+
+
+def finish_calibration(now):
+    if not calibration_samples["open"] or not calibration_samples["pinch"]:
+        show_message("Calibration failed: keep your hand in view", now)
+        return
+
+    # Medians ignore the odd misread frame.
+    open_ratio = statistics.median(calibration_samples["open"])
+    pinch_ratio = statistics.median(calibration_samples["pinch"])
+
+    if open_ratio - pinch_ratio < 0.1:
+        show_message("Calibration failed: poses too similar, try again", now)
+        return
+
+    apply_calibration(open_ratio, pinch_ratio)
+
+    with open(CALIBRATION_FILE, "w") as file:
+        json.dump({"open": open_ratio, "pinch": pinch_ratio}, file, indent=2)
+
+    show_message(
+        f"Calibrated: pinch below {PINCH_START:.2f}, "
+        f"release above {PINCH_RELEASE:.2f}",
+        now
+    )
+
+
 def detect_click(ratio, now):
     global pinch_frames, release_frames
     global pinching, click_armed, last_click_time
@@ -298,13 +591,20 @@ if not camera.isOpened():
 
 camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_W)
 camera.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_H)
+camera.set(cv2.CAP_PROP_FPS, CAMERA_FPS)
 # Always process the newest frame to keep latency low.
 camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+load_calibration()
+cursor_mover.start()
+
+fps = 0.0
+last_frame_time = time.monotonic()
 
 try:
     with mp_hands.Hands(
         max_num_hands=1,
-        model_complexity=1,
+        model_complexity=MODEL_COMPLEXITY,
         min_detection_confidence=0.7,
         min_tracking_confidence=0.7
     ) as hands:
@@ -317,6 +617,15 @@ try:
 
             now = time.monotonic()
 
+            # Smoothed frames per second, shown on screen.
+            frame_time = now - last_frame_time
+            last_frame_time = now
+            if frame_time > 0:
+                fps += 0.1 * (1.0 / frame_time - fps)
+
+            if cursor_mover.failsafe:
+                raise pyautogui.FailSafeException()
+
             frame = cv2.flip(frame, 1)
             height, width = frame.shape[:2]
 
@@ -328,6 +637,7 @@ try:
             status = "Show hand"
             ratio_text = "Pinch ratio: --"
             color = (255, 255, 255)
+            calibration_ratio = None
 
             # Show the active region that maps to the screen.
             cv2.rectangle(
@@ -341,6 +651,7 @@ try:
             )
 
             if results.multi_hand_landmarks:
+                lost_frames = 0
                 hand = results.multi_hand_landmarks[0]
                 points = hand.landmark
 
@@ -365,21 +676,56 @@ try:
                 if hand_size > 1.0:
                     ratio = pinch_distance / hand_size
 
-                    update_scroll_mode(
-                        is_peace_sign(points, width, height)
-                    )
+                if hand_size > 1.0 and calibration_step is None:
+                    if is_open_palm(points, width, height):
+                        gesture = "palm"
+                    elif is_fist(points, width, height):
+                        gesture = "fist"
+                    elif is_peace_sign(points, width, height):
+                        gesture = "peace"
+                    else:
+                        gesture = "other"
+
+                    update_grab(gesture)
+
+                    # Scrolling is only available outside drag and drop.
+                    if grab_state == "idle":
+                        update_scroll_mode(gesture == "peace")
+                    else:
+                        reset_scroll()
 
                 if hand_size <= 1.0:
                     status = "Adjust hand position"
 
+                elif calibration_step is not None:
+                    # Gestures are paused while measuring the hand.
+                    calibration_ratio = ratio
+                    ratio_text = f"Pinch ratio: {ratio:.2f}"
+
+                elif grab_state != "idle":
+                    # 4. Drag and drop (the palm steers, it stays put
+                    # while the fingers curl)
+                    move_cursor(points, PALM_CENTER, now)
+                    reset_click()
+
+                    if grab_state == "dragging":
+                        status = "DRAGGING - open palm to drop"
+                        color = (0, 0, 255)
+                    else:
+                        status = "READY - close fist to grab"
+                        color = (255, 128, 0)
+
+                    palm = points[PALM_CENTER]
+                    cv2.circle(
+                        frame,
+                        (int(palm.x * width), int(palm.y * height)),
+                        16, color, -1 if grab_state == "dragging" else 2
+                    )
+
                 elif scrolling:
                     # 3. Scrolling (cursor and clicks paused)
                     scroll_with(points)
-
-                    pinch_frames = 0
-                    release_frames = 0
-                    pinching = False
-                    click_armed = True
+                    reset_click()
 
                     status = "SCROLL"
                     color = (255, 255, 0)
@@ -391,10 +737,16 @@ try:
                             10, color, 2
                         )
 
+                elif gesture == "fist":
+                    # A fist without an open palm first does nothing,
+                    # and must not be read as a pinch.
+                    reset_click()
+                    status = "Open palm first to drag"
+
                 else:
                     # 1. Cursor movement (held still while pinching)
                     if not pinching and ratio >= FREEZE_RATIO:
-                        move_cursor(index_tip, now)
+                        move_cursor(points, INDEX_TIP, now)
 
                     # 2. Pinch detection
                     detect_click(ratio, now)
@@ -423,11 +775,24 @@ try:
 
             else:
                 # Reset the cursor filter after tracking is lost.
-                reset_tracking()
+                lost_frames += 1
+                if lost_frames >= TRACKING_LOST_FRAMES:
+                    reset_tracking()
+
+            if calibration_step is not None:
+                calibration_status = update_calibration(calibration_ratio, now)
+                if calibration_status:
+                    status = calibration_status
+                    color = (255, 0, 255)
+
+            if now < calibration_message_until:
+                status = calibration_message
+                color = (255, 0, 255)
 
             cv2.putText(
                 frame, status, (20, 35),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8 if len(status) < 30 else 0.55, color, 2
             )
 
             cv2.putText(
@@ -437,20 +802,41 @@ try:
             )
 
             cv2.putText(
-                frame, "Q = quit", (20, height - 20),
+                frame, f"FPS: {fps:.0f}", (width - 110, 35),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65,
+                (255, 255, 255), 2
+            )
+
+            cv2.putText(
+                frame, "C = calibrate   Q = quit", (20, height - 20),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55,
                 (255, 255, 255), 1
             )
 
             cv2.imshow("AirControl", frame)
 
-            if cv2.waitKey(1) & 0xFF == ord("q"):
+            key = cv2.waitKey(1) & 0xFF
+
+            if key == ord("q"):
                 break
+
+            if key == ord("c") and calibration_step is None:
+                # Let go of anything held before measuring.
+                reset_click()
+                reset_scroll()
+                reset_grab()
+                start_calibration(now)
 
 except pyautogui.FailSafeException:
     print("Emergency stop triggered.")
 
 finally:
+    # Release a held drag even if the fail-safe fired in a corner.
+    pyautogui.FAILSAFE = False
+    cursor_mover.stop()
+    if cursor_mover.is_alive():
+        cursor_mover.join(timeout=0.5)
+    reset_grab()
     camera.release()
     cv2.destroyAllWindows()
     print("AirControl stopped.")

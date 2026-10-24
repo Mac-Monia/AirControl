@@ -10,9 +10,12 @@ The project uses MediaPipe for real-time hand landmark detection, OpenCV for web
 - **Gesture-Based Cursor Control:** Moves the mouse cursor using the index fingertip.
 - **Adaptive Cursor Smoothing:** Uses a One Euro filter: steady when your hand is still, responsive when it moves fast.
 - **Active Region Mapping:** Maps an inner area of the camera frame to the full screen so edges are easy to reach.
+- **Smooth Cursor Output:** Moves the cursor on its own thread, gliding between camera frames instead of jumping once per frame.
+- **Pinch Calibration:** Press `C` to measure your own hand and set the click thresholds automatically.
 - **Click Aim Lock:** Freezes the cursor as your fingers close so clicks land where you aimed.
 - **Pinch-to-Click:** Simulates a mouse click when the thumb and index fingertip come together, measured in 3D relative to hand size.
 - **Peace-Sign Scrolling:** Raise your index and middle fingers (ring and pinky folded) and move your hand up or down to scroll.
+- **Drag and Drop:** Open your palm to get ready, close your fist to grab, and open your palm again to drop.
 - **Click Stabilization:** Uses consecutive-frame confirmation and separate pinch and release thresholds to reduce accidental clicks.
 - **Visual Feedback:** Displays hand landmarks, pinch status, and tracking information in a live camera window.
 - **Emergency Fail-Safe:** Keeps PyAutoGUI's fail-safe enabled.
@@ -86,8 +89,18 @@ Position your hand in front of the webcam.
 - Bring your thumb and index fingertip together to trigger a mouse click.
 - Release the pinch before performing another click.
 - Make a peace sign (index and middle fingers up) and move your hand up or down to scroll. The cursor stays still while scrolling.
+- To drag and drop: open your palm over the object, close your fist to grab it, move your hand, then open your palm to drop it. A fist on its own does nothing.
 
-### 3. Exit the application
+### 3. Calibrate the pinch (recommended on first run)
+
+Press `C` and follow the prompts in the camera window:
+
+1. Point with your index finger, thumb relaxed (2.5 seconds).
+2. Pinch your thumb and index finger together (2.5 seconds).
+
+The click thresholds are set from your hand and saved to `calibration.json`, which loads automatically next time. Recalibrate if clicks trigger too early or too late.
+
+### 4. Exit the application
 
 Press `Q` while the camera window is active.
 
@@ -101,6 +114,8 @@ AirControl's behavior can be adjusted by changing the configuration constants in
 | `MIN_CUTOFF`              | Smoothing when the hand is still (lower = less jitter).         |
 | `BETA`                    | Responsiveness during fast movement (higher = less lag).        |
 | `FREEZE_RATIO`            | Pinch ratio below which the cursor stops moving to aim a click. |
+| `MODEL_COMPLEXITY`        | 1 = more accurate, 0 = faster. Use 0 if the on-screen FPS is low. |
+| `CURSOR_GLIDE`            | How quickly the cursor glides to its target (lower = snappier). |
 | `PINCH_START`             | Determines the threshold for starting a pinch gesture.          |
 | `PINCH_RELEASE`           | Determines the threshold for releasing a pinch.                 |
 | `PINCH_FRAMES_REQUIRED`   | Sets how many consecutive frames are needed to confirm a pinch. |
@@ -110,6 +125,8 @@ AirControl's behavior can be adjusted by changing the configuration constants in
 | `SCROLL_DEAD_ZONE`        | Ignores small hand movements while scrolling.                   |
 | `SCROLL_INVERT`           | Reverses the scroll direction.                                  |
 | `FINGER_EXTENDED_RATIO`   | How straight a finger must be to count as raised.               |
+| `GRAB_FRAMES_REQUIRED`    | Frames a palm or fist must be held to grab or drop.             |
+| `READY_EXIT_FRAMES`       | Frames of another gesture before drag mode is cancelled.        |
 
 ### Tuning tips
 
@@ -151,7 +168,6 @@ AirControl is under active development. Current work focuses on improving cursor
 
 - Cursor calibration and configurable sensitivity.
 - Improved pinch detection and click reliability.
-- Gesture-based dragging.
 - Support for additional hand gestures.
 - Performance and usability improvements.
 
