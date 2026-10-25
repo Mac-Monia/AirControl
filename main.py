@@ -81,6 +81,18 @@ GRAB_FRAMES_REQUIRED = 3
 # enough to cover the in-between frames while the fist closes.
 READY_EXIT_FRAMES = 15
 
+# Zoom: pinch with both hands, then move them apart to zoom in or
+# together to zoom out. Sends Ctrl + mouse wheel, which zooms in most apps.
+ZOOM_FRAMES_REQUIRED = 3
+# Frames without a two-hand pinch before zoom stops; covers missed
+# detections so a single dropped frame does not end the zoom.
+ZOOM_EXIT_FRAMES = 4
+# Change in hand distance per zoom step, on a log scale
+# (0.15 = hands about 16% farther apart or closer together)
+ZOOM_STEP = 0.15
+# True = hands apart zooms out
+ZOOM_INVERT = False
+
 # Landmarks the cursor can follow
 INDEX_TIP = 8
 PALM_CENTER = 9
@@ -213,6 +225,7 @@ tracking_landmark = None
 offset_x = 0.0
 offset_y = 0.0
 lost_frames = 0
+primary_wrist = None  # last position of the hand that steers the cursor
 
 pinch_frames = 0
 release_frames = 0
@@ -228,6 +241,10 @@ scroll_remainder = 0.0
 grab_state = "idle"  # "idle", "ready" or "dragging"
 grab_pending = None
 grab_frames = 0
+
+zoom_frames = 0
+zooming = False
+zoom_anchor = None
 
 calibration_step = None  # index into CALIBRATION_STEPS while running
 calibration_step_start = 0.0
@@ -287,16 +304,53 @@ def move_cursor(points, landmark, now):
 
 
 def reset_tracking():
-    global tracking_landmark, offset_x, offset_y
+    global tracking_landmark, offset_x, offset_y, primary_wrist
 
     filter_x.reset()
     filter_y.reset()
     tracking_landmark = None
     offset_x = 0.0
     offset_y = 0.0
+    primary_wrist = None
     reset_click()
     reset_scroll()
     reset_grab()
+    reset_zoom()
+
+
+def measure_hand(points, width, height):
+    # Hand size: the larger of palm width and palm length, so the
+    # ratio stays stable when the hand rotates.
+    hand_size = max(
+        landmark_distance(points[5], points[17], width, height),
+        landmark_distance(points[0], points[9], width, height)
+    )
+
+    if hand_size <= 1.0:
+        return hand_size, None
+
+    pinch_distance = landmark_distance(points[4], points[8], width, height)
+    return hand_size, pinch_distance / hand_size
+
+
+def pick_primary_hand(hands):
+    global primary_wrist
+
+    # MediaPipe does not keep hands in a fixed order, so follow the
+    # one nearest to where the cursor hand was last seen.
+    if primary_wrist is None or len(hands) == 1:
+        primary = hands[0]
+    else:
+        primary = min(
+            hands,
+            key=lambda hand: (
+                (hand.landmark[0].x - primary_wrist[0]) ** 2
+                + (hand.landmark[0].y - primary_wrist[1]) ** 2
+            )
+        )
+
+    primary_wrist = (primary.landmark[0].x, primary.landmark[0].y)
+    return primary
 
 
 def reset_click():
@@ -306,6 +360,25 @@ def reset_click():
     release_frames = 0
     pinching = False
     click_armed = True
+
+
+def hold_click():
+    global pinch_frames, release_frames, pinching, click_armed
+
+    # Treat the pinch as already used, so letting go of one hand
+    # after zooming does not click.
+    pinch_frames = 0
+    release_frames = 0
+    pinching = True
+    click_armed = False
+
+
+def reset_zoom():
+    global zoom_frames, zooming, zoom_anchor
+
+    zoom_frames = 0
+    zooming = False
+    zoom_anchor = None
 
 
 def reset_grab():
@@ -458,6 +531,69 @@ def scroll_with(points):
         pyautogui.scroll(clicks)
 
 
+def hand_pinched(ratio):
+    # Looser threshold once zooming, like detect_click, so the zoom
+    # holds through a slightly relaxed pinch.
+    return ratio < (PINCH_RELEASE if zooming else PINCH_START)
+
+
+def update_zoom_mode(both_pinched):
+    global zoom_frames, zooming, zoom_anchor
+
+    if both_pinched != zooming:
+        zoom_frames += 1
+    else:
+        zoom_frames = 0
+
+    needed = ZOOM_FRAMES_REQUIRED if both_pinched else ZOOM_EXIT_FRAMES
+    if zoom_frames >= needed:
+        zooming = both_pinched
+        zoom_frames = 0
+        zoom_anchor = None
+
+
+def pinch_point(points, width, height):
+    thumb, index = points[4], points[8]
+    return (
+        (thumb.x + index.x) / 2 * width,
+        (thumb.y + index.y) / 2 * height
+    )
+
+
+def zoom_with(points, hand_size, other_points, other_size, width, height):
+    global zoom_anchor
+
+    a = pinch_point(points, width, height)
+    b = pinch_point(other_points, width, height)
+
+    # Relative to hand size so it works at any distance from the camera;
+    # a log scale makes each step feel the same at any separation.
+    separation = math.dist(a, b) / ((hand_size + other_size) / 2)
+    level = math.log(max(separation, 1e-3))
+
+    if zoom_anchor is None:
+        zoom_anchor = level
+        return
+
+    steps = int((level - zoom_anchor) / ZOOM_STEP)
+    if not steps:
+        return
+
+    zoom_anchor += steps * ZOOM_STEP
+
+    if ZOOM_INVERT:
+        steps = -steps
+
+    # 120 wheel units = one notch on Windows
+    pyautogui.keyDown("ctrl")
+    try:
+        pyautogui.scroll(steps * 120)
+    finally:
+        pyautogui.keyUp("ctrl")
+
+    print("ZOOM IN" if steps > 0 else "ZOOM OUT")
+
+
 def apply_calibration(open_ratio, pinch_ratio):
     global PINCH_START, PINCH_RELEASE, FREEZE_RATIO
 
@@ -603,7 +739,7 @@ last_frame_time = time.monotonic()
 
 try:
     with mp_hands.Hands(
-        max_num_hands=1,
+        max_num_hands=2,
         model_complexity=MODEL_COMPLEXITY,
         min_detection_confidence=0.7,
         min_tracking_confidence=0.7
@@ -638,6 +774,7 @@ try:
             ratio_text = "Pinch ratio: --"
             color = (255, 255, 255)
             calibration_ratio = None
+            both_pinched = False
 
             # Show the active region that maps to the screen.
             cv2.rectangle(
@@ -652,29 +789,38 @@ try:
 
             if results.multi_hand_landmarks:
                 lost_frames = 0
-                hand = results.multi_hand_landmarks[0]
+                found = results.multi_hand_landmarks
+                hand = pick_primary_hand(found)
                 points = hand.landmark
 
-                mp_draw.draw_landmarks(
-                    frame, hand, mp_hands.HAND_CONNECTIONS
-                )
+                for each in found:
+                    mp_draw.draw_landmarks(
+                        frame, each, mp_hands.HAND_CONNECTIONS
+                    )
 
                 index_tip = points[8]
-                thumb_tip = points[4]
+                hand_size, ratio = measure_hand(points, width, height)
 
-                # Hand size: the larger of palm width and palm length,
-                # so the ratio stays stable when the hand rotates.
-                hand_size = max(
-                    landmark_distance(points[5], points[17], width, height),
-                    landmark_distance(points[0], points[9], width, height)
-                )
+                # The other hand is only used for zooming.
+                other_points = None
+                if len(found) > 1:
+                    other = found[1] if hand is found[0] else found[0]
+                    other_points = other.landmark
+                    other_size, other_ratio = measure_hand(
+                        other_points, width, height
+                    )
 
-                pinch_distance = landmark_distance(
-                    thumb_tip, index_tip, width, height
-                )
+                    # Zooming is only available outside drag and drop.
+                    both_pinched = (
+                        hand_size > 1.0
+                        and other_ratio is not None
+                        and grab_state == "idle"
+                        and hand_pinched(ratio)
+                        and hand_pinched(other_ratio)
+                    )
 
-                if hand_size > 1.0:
-                    ratio = pinch_distance / hand_size
+                if calibration_step is None:
+                    update_zoom_mode(both_pinched)
 
                 if hand_size > 1.0 and calibration_step is None:
                     if is_open_palm(points, width, height):
@@ -721,6 +867,35 @@ try:
                         (int(palm.x * width), int(palm.y * height)),
                         16, color, -1 if grab_state == "dragging" else 2
                     )
+
+                elif zooming or both_pinched:
+                    # 5. Zoom (cursor and clicks paused; apps zoom
+                    # around the cursor)
+                    hold_click()
+                    reset_scroll()
+
+                    if zooming and both_pinched:
+                        zoom_with(
+                            points, hand_size,
+                            other_points, other_size,
+                            width, height
+                        )
+
+                    if zooming:
+                        status = "ZOOM - move hands apart or together"
+                        color = (255, 0, 128)
+                    else:
+                        status = "Hold both pinches to zoom"
+                        color = (0, 255, 255)
+
+                    if other_points is not None:
+                        a = pinch_point(points, width, height)
+                        b = pinch_point(other_points, width, height)
+                        a = (int(a[0]), int(a[1]))
+                        b = (int(b[0]), int(b[1]))
+                        cv2.line(frame, a, b, color, 2)
+                        cv2.circle(frame, a, 10, color, -1)
+                        cv2.circle(frame, b, 10, color, -1)
 
                 elif scrolling:
                     # 3. Scrolling (cursor and clicks paused)
@@ -825,6 +1000,7 @@ try:
                 reset_click()
                 reset_scroll()
                 reset_grab()
+                reset_zoom()
                 start_calibration(now)
 
 except pyautogui.FailSafeException:

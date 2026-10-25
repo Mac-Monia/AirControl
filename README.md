@@ -16,6 +16,7 @@ The project uses MediaPipe for real-time hand landmark detection, OpenCV for web
 - **Pinch-to-Click:** Simulates a mouse click when the thumb and index fingertip come together, measured in 3D relative to hand size.
 - **Peace-Sign Scrolling:** Raise your index and middle fingers (ring and pinky folded) and move your hand up or down to scroll.
 - **Drag and Drop:** Open your palm to get ready, close your fist to grab, and open your palm again to drop.
+- **Two-Hand Pinch Zoom:** Pinch with both hands and move them apart to zoom in, or together to zoom out.
 - **Click Stabilization:** Uses consecutive-frame confirmation and separate pinch and release thresholds to reduce accidental clicks.
 - **Visual Feedback:** Displays hand landmarks, pinch status, and tracking information in a live camera window.
 - **Emergency Fail-Safe:** Keeps PyAutoGUI's fail-safe enabled.
@@ -90,6 +91,7 @@ Position your hand in front of the webcam.
 - Release the pinch before performing another click.
 - Make a peace sign (index and middle fingers up) and move your hand up or down to scroll. The cursor stays still while scrolling.
 - To drag and drop: open your palm over the object, close your fist to grab it, move your hand, then open your palm to drop it. A fist on its own does nothing.
+- To zoom: pinch your thumb and index finger on both hands, then move your hands apart to zoom in or closer together to zoom out. Release the pinches to stop. Zooming sends Ctrl + mouse wheel, so it works in browsers, image viewers, maps and most editors, and zooms around the cursor.
 
 ### 3. Calibrate the pinch (recommended on first run)
 
@@ -127,6 +129,10 @@ AirControl's behavior can be adjusted by changing the configuration constants in
 | `FINGER_EXTENDED_RATIO`   | How straight a finger must be to count as raised.               |
 | `GRAB_FRAMES_REQUIRED`    | Frames a palm or fist must be held to grab or drop.             |
 | `READY_EXIT_FRAMES`       | Frames of another gesture before drag mode is cancelled.        |
+| `ZOOM_FRAMES_REQUIRED`    | Frames both hands must pinch before zooming starts.             |
+| `ZOOM_EXIT_FRAMES`        | Frames without a two-hand pinch before zooming stops.           |
+| `ZOOM_STEP`               | How far the hands must move per zoom step (lower = faster).     |
+| `ZOOM_INVERT`             | Reverses the zoom direction.                                    |
 
 ### Tuning tips
 
