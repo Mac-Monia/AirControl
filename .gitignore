@@ -16,3 +16,6 @@ __pycache__/
 Thumbs.db
 # Per-user pinch calibration
 calibration.json
+
+# Personal gesture and tuning settings (see settings.example.json)
+settings.json

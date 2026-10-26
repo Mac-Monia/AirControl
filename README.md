@@ -1,187 +1,265 @@
 # AirControl
 
-AirControl is a Python-based hand-tracking project that lets you control your computer's mouse cursor using hand gestures captured through a webcam.
+AirControl is a Python application that lets you control your computer hands-free with gestures captured by your webcam: move the cursor, click, right-click, double-click, scroll, drag and drop, zoom, swipe between pages, control media and run presentations.
 
-The project uses MediaPipe for real-time hand landmark detection, OpenCV for webcam processing and visualization, and PyAutoGUI for mouse control.
+It uses MediaPipe for real-time hand landmark detection, OpenCV for webcam capture and on-screen feedback, and PyAutoGUI for mouse and keyboard control.
 
 ## Features
 
-- **Real-Time Hand Tracking:** Detects hand landmarks using a webcam.
-- **Gesture-Based Cursor Control:** Moves the mouse cursor using the index fingertip.
-- **Adaptive Cursor Smoothing:** Uses a One Euro filter: steady when your hand is still, responsive when it moves fast.
-- **Active Region Mapping:** Maps an inner area of the camera frame to the full screen so edges are easy to reach.
-- **Smooth Cursor Output:** Moves the cursor on its own thread, gliding between camera frames instead of jumping once per frame.
-- **Pinch Calibration:** Press `C` to measure your own hand and set the click thresholds automatically.
-- **Click Aim Lock:** Freezes the cursor as your fingers close so clicks land where you aimed.
-- **Pinch-to-Click:** Simulates a mouse click when the thumb and index fingertip come together, measured in 3D relative to hand size.
-- **Peace-Sign Scrolling:** Raise your index and middle fingers (ring and pinky folded) and move your hand up or down to scroll.
-- **Drag and Drop:** Open your palm to get ready, close your fist to grab, and open your palm again to drop.
-- **Two-Hand Pinch Zoom:** Pinch with both hands and move them apart to zoom in, or together to zoom out.
-- **Click Stabilization:** Uses consecutive-frame confirmation and separate pinch and release thresholds to reduce accidental clicks.
-- **Visual Feedback:** Displays hand landmarks, pinch status, and tracking information in a live camera window.
-- **Emergency Fail-Safe:** Keeps PyAutoGUI's fail-safe enabled.
+**Pointing and clicking**
 
-## Technologies
+- **Cursor control:** Move the cursor with your index fingertip.
+- **Adaptive smoothing:** A One Euro filter keeps the cursor steady when your hand is still and responsive when it moves fast. The cursor glides on its own thread between camera frames.
+- **Click:** Pinch your thumb and index finger together. The cursor freezes as your fingers close, so the click lands where you aimed.
+- **Double-click:** Pinch twice quickly. After a click the cursor holds still briefly so the second click lands on the same spot.
+- **Right-click:** Keep your index finger up and pinch your thumb and middle finger together.
 
-- Python
-- OpenCV
-- MediaPipe
-- PyAutoGUI
+**Gestures**
 
-## Prerequisites
+- **Scroll:** Make a peace sign and move your hand up or down.
+- **Drag and drop:** Open your palm, close your fist to grab, open your palm to drop.
+- **Zoom:** Pinch with both hands, then move them apart or together.
+- **Swipe:** Raise three fingers and flick left, right, up or down.
+- **Media controls:** Thumbs up plays or pauses in any app. In the media profile, swipes change the track and the volume.
+- **Presentation controls:** In the slides profile, swipes move between slides and start or end the slideshow.
+- **Navigation:** In the navigate profile, swipes go back, forward and between tabs.
 
-Before running AirControl, make sure you have:
+**Reliability and control**
 
-- Python installed.
-- A working webcam.
-- A desktop environment that supports mouse control.
-- Git installed if you want to clone the repository.
+- **Accidental-action prevention:** Gestures must be held for several frames, and some must be held for a set time. Thresholds differ for starting and releasing a gesture. Pinches are ignored right after another mode, and held poses are ignored when your hand is partly out of view.
+- **Feedback:** The camera window shows the current mode, the last action, a progress bar for held gestures, warnings, a help overlay (`H`) and a debug view (`D`).
+- **Calibration and sensitivity:** Pinch calibration (`C`), reach calibration (`R`), and live sensitivity (`+`/`-`) and smoothing (`[`/`]`) adjustment, all saved between runs.
+- **Configurable gestures:** Assign swipes, thumbs up and the rock sign to any keys, hotkeys, mouse actions or profile switches in `settings.json`, and override any tuning value.
+- **Safety:** Hold both palms open to pause or resume. `Ctrl+Alt+P` pauses and `Ctrl+Alt+Q` quits from any window (Windows). The PyAutoGUI fail-safe stays on, and held mouse buttons are always released.
+- **Error handling:** If the camera stops sending frames, AirControl reconnects automatically and releases any drag. It warns about low light and a hand at the edge of the frame. Bad settings produce warnings instead of crashes.
+- **Performance:** Camera capture runs on its own thread, so hand tracking always uses the newest frame. The window shows FPS and processing time.
+
+## Requirements
+
+- Python 3.9–3.12
+- A webcam
+- A desktop environment that supports mouse control (developed and tested on Windows; global hotkeys and the system double-click time are Windows-only)
 
 ## Installation
-
-### 1. Clone the repository
 
 ```bash
 git clone https://github.com/Mac-Monia/AirControl.git
 cd AirControl
-```
-
-### 2. Create a virtual environment
-
-On Windows:
-
-```powershell
 python -m venv .venv
 ```
 
-### 3. Activate the virtual environment
+Activate the virtual environment:
 
 ```powershell
 .venv\Scripts\Activate.ps1
 ```
 
-If PowerShell blocks activation, you can use Command Prompt instead:
+If PowerShell blocks activation, use Command Prompt instead: `.venv\Scripts\activate.bat`.
 
-```bat
-.venv\Scripts\activate.bat
-```
-
-### 4. Install the dependencies
+Install the dependencies:
 
 ```bash
-python -m pip install opencv-python mediapipe pyautogui
+python -m pip install -r requirements.txt
 ```
 
 ## Usage
-
-### 1. Start AirControl
-
-From the project directory, run:
 
 ```bash
 python main.py
 ```
 
-### 2. Control the cursor
+Hold your hand 40–80 cm from the webcam, palm facing the camera, in good light. The magenta rectangle shows the area of the camera view that maps to your screen.
 
-Position your hand in front of the webcam.
+### Gestures
 
-- Move your index fingertip to move the mouse cursor.
-- Bring your thumb and index fingertip together to trigger a mouse click.
-- Release the pinch before performing another click.
-- Make a peace sign (index and middle fingers up) and move your hand up or down to scroll. The cursor stays still while scrolling.
-- To drag and drop: open your palm over the object, close your fist to grab it, move your hand, then open your palm to drop it. A fist on its own does nothing.
-- To zoom: pinch your thumb and index finger on both hands, then move your hands apart to zoom in or closer together to zoom out. Release the pinches to stop. Zooming sends Ctrl + mouse wheel, so it works in browsers, image viewers, maps and most editors, and zooms around the cursor.
+| Gesture | Action |
+| --- | --- |
+| Point with your index finger | Move the cursor |
+| Pinch thumb + index | Click |
+| Pinch thumb + index twice quickly | Double-click |
+| Index finger up, pinch thumb + middle | Right-click |
+| Peace sign (index + middle up), move up/down | Scroll |
+| Open palm → close fist → open palm | Grab, move, drop |
+| Pinch with both hands, move apart/together | Zoom in/out (Ctrl + mouse wheel) |
+| Three fingers up (index, middle, ring), flick | Swipe (depends on the profile) |
+| Thumbs up, hold | Play/pause (black screen in the slides profile) |
+| Index + pinky up (rock sign), hold | Switch to the next profile |
+| Both palms open, hold about 1 second | Pause / resume AirControl |
 
-### 3. Calibrate the pinch (recommended on first run)
+A fist on its own does nothing, so curling your hand never clicks or grabs by accident. Swipe directions follow your hand as you see it in the mirrored camera window. Swiping left means "next", as on a touchscreen.
 
-Press `C` and follow the prompts in the camera window:
+### Profiles
+
+Swipes and held poses change meaning with the active profile, shown at the top right of the camera window. Switch profiles with the rock sign or the `M` key.
+
+| Profile | Swipe left | Swipe right | Swipe up | Swipe down | Thumbs up |
+| --- | --- | --- | --- | --- | --- |
+| `navigate` | Forward (Alt+→) | Back (Alt+←) | Next tab | Previous tab | Play/pause |
+| `media` | Next track | Previous track | Volume up | Volume down | Play/pause |
+| `slides` | Next slide (→) | Previous slide (←) | Start slideshow (Shift+F5) | End slideshow (Esc) | Black screen (B) |
+
+The slideshow keys suit PowerPoint. Change them in `settings.json` for other apps.
+
+### Keys
+
+These keys work when the camera window is focused.
+
+| Key | Action |
+| --- | --- |
+| `H` | Show or hide the gesture and key help |
+| `P` | Pause / resume |
+| `M` | Next profile |
+| `+` / `-` | More / less cursor sensitivity |
+| `[` / `]` | Steadier / snappier cursor |
+| `0` | Reset sensitivity and smoothing |
+| `C` | Calibrate the pinch |
+| `R` | Calibrate your reach |
+| `D` | Show or hide the debug view |
+| `L` | Show or hide hand landmarks |
+| `Q` / `Esc` | Quit |
+
+On Windows, `Ctrl+Alt+P` (pause) and `Ctrl+Alt+Q` (quit) work from any window.
+
+### Calibration (recommended on first run)
+
+**Pinch (`C`):** follow the prompts in the camera window.
 
 1. Point with your index finger, thumb relaxed (2.5 seconds).
 2. Pinch your thumb and index finger together (2.5 seconds).
 
-The click thresholds are set from your hand and saved to `calibration.json`, which loads automatically next time. Recalibrate if clicks trigger too early or too late.
+This sets the click thresholds for your hand. Recalibrate if clicks trigger too early or too late.
 
-### 4. Exit the application
+**Reach (`R`):** for 6 seconds, trace the edges of the area your index finger can comfortably cover. A green box shows the area covered so far, and that area then maps to the whole screen. This suits your arm, your seating position and your screen size.
 
-Press `Q` while the camera window is active.
+Calibration, sensitivity and smoothing are saved to `calibration.json` and load automatically next time.
+
+### Stopping
+
+- Press `Q` or `Esc` in the camera window, or close the window.
+- Press `Ctrl+Alt+Q` from anywhere (Windows).
+- Emergency stop: move the mouse to the top-left corner of the screen to trigger PyAutoGUI's fail-safe.
 
 ## Configuration
 
-AirControl's behavior can be adjusted by changing the configuration constants in `main.py`.
+Copy `settings.example.json` to `settings.json` and edit it. Anything you leave out keeps its default. `settings.json` is personal and is not committed.
 
-| Parameter                 | Description                                                     |
-| ------------------------- | --------------------------------------------------------------- |
-| `FRAME_MARGIN_X/Y`        | Size of the frame border excluded from screen mapping.          |
-| `MIN_CUTOFF`              | Smoothing when the hand is still (lower = less jitter).         |
-| `BETA`                    | Responsiveness during fast movement (higher = less lag).        |
-| `FREEZE_RATIO`            | Pinch ratio below which the cursor stops moving to aim a click. |
-| `MODEL_COMPLEXITY`        | 1 = more accurate, 0 = faster. Use 0 if the on-screen FPS is low. |
-| `CURSOR_GLIDE`            | How quickly the cursor glides to its target (lower = snappier). |
-| `PINCH_START`             | Determines the threshold for starting a pinch gesture.          |
-| `PINCH_RELEASE`           | Determines the threshold for releasing a pinch.                 |
-| `PINCH_FRAMES_REQUIRED`   | Sets how many consecutive frames are needed to confirm a pinch. |
-| `RELEASE_FRAMES_REQUIRED` | Sets how many consecutive frames are needed to confirm release. |
-| `CLICK_COOLDOWN`          | Sets the minimum interval between mouse clicks.                 |
-| `SCROLL_SPEED`            | How far the page scrolls per hand movement.                     |
-| `SCROLL_DEAD_ZONE`        | Ignores small hand movements while scrolling.                   |
-| `SCROLL_INVERT`           | Reverses the scroll direction.                                  |
-| `FINGER_EXTENDED_RATIO`   | How straight a finger must be to count as raised.               |
-| `GRAB_FRAMES_REQUIRED`    | Frames a palm or fist must be held to grab or drop.             |
-| `READY_EXIT_FRAMES`       | Frames of another gesture before drag mode is cancelled.        |
-| `ZOOM_FRAMES_REQUIRED`    | Frames both hands must pinch before zooming starts.             |
-| `ZOOM_EXIT_FRAMES`        | Frames without a two-hand pinch before zooming stops.           |
-| `ZOOM_STEP`               | How far the hands must move per zoom step (lower = faster).     |
-| `ZOOM_INVERT`             | Reverses the zoom direction.                                    |
+```json
+{
+  "profile": "slides",
+  "tuning": {
+    "SCROLL_SPEED": 3500,
+    "CAMERA_INDEX": 1
+  },
+  "gestures": {
+    "media": {
+      "swipe_up": {"action": "volumeup*10", "label": "Volume up more"}
+    },
+    "slides": {
+      "swipe_up": "ctrl+f5"
+    }
+  }
+}
+```
 
-### Tuning tips
+- **`profile`:** the profile to start in.
+- **`tuning`:** overrides any number or true/false constant at the top of `main.py`. Values that should be whole numbers must stay whole.
+- **`gestures`:** maps `swipe_left`, `swipe_right`, `swipe_up`, `swipe_down`, `thumbs_up` and `rock` to an action, per profile. Entries under `all` apply in every profile unless the profile sets the same gesture. Add a new name to create a new profile.
 
-- If the cursor is shaky while your hand is still, lower `MIN_CUTOFF`.
-- If the cursor lags behind fast movements, increase `BETA` gradually.
-- If you can't reach the screen edges, increase `FRAME_MARGIN_X/Y`; if the cursor is too sensitive, decrease them.
-- If the cursor stops too early before a click, lower `FREEZE_RATIO` (keep it above `PINCH_START`).
-- If pinching does not trigger a click, inspect the displayed pinch ratio and adjust the pinch thresholds.
-- If accidental clicks occur, lower `PINCH_START` and test again.
+Each gesture maps either to an action text or to an object with an `action` and a `label` (the text shown on screen). Action texts:
 
-Change one parameter at a time and test under consistent lighting and camera positioning.
+| Action | Example | Meaning |
+| --- | --- | --- |
+| Key | `"space"`, `"pagedown"`, `"playpause"` | Press a key (any PyAutoGUI key name) |
+| Hotkey | `"ctrl+shift+tab"` | Press keys together |
+| Repeat | `"volumeup*5"` | Press several times |
+| Mouse | `"mouse:right"`, `"mouse:double"` | Click (`left`, `right`, `middle`, `double`) |
+| Profile | `"profile:next"`, `"profile:media"` | Switch profile (`next`, `previous` or a name) |
+| Pause | `"pause"` | Pause AirControl |
+| Nothing | `"none"` | Disable the gesture |
+
+Invalid entries are reported in the terminal at startup and skipped.
+
+### Common tuning values
+
+| Parameter | Description |
+| --- | --- |
+| `CAMERA_INDEX` | Which webcam to use (0 = default). |
+| `MODEL_COMPLEXITY` | 1 = more accurate, 0 = faster. Use 0 if the FPS is below about 20. |
+| `FRAME_MARGIN_X/Y` | Default frame border excluded from screen mapping (before reach calibration). |
+| `MIN_CUTOFF` | Smoothing when the hand is still (lower = less jitter). |
+| `BETA` | Responsiveness during fast movement (higher = less lag). |
+| `CURSOR_GLIDE` | How quickly the cursor glides to its target (lower = snappier). |
+| `PINCH_START` / `PINCH_RELEASE` | Pinch ratios that start and release a pinch (set by calibration). |
+| `FREEZE_RATIO` | Pinch ratio below which the cursor stops moving to aim a click. |
+| `PINCH_FRAMES_REQUIRED` | Frames a pinch must be held to click. |
+| `CLICK_COOLDOWN` | Minimum seconds between clicks. |
+| `DOUBLE_CLICK_TIME` | Seconds the cursor holds still after a click (0 = system setting). |
+| `MIDDLE_REACH_RATIO` | How far the middle finger must reach out for a right-click pinch. |
+| `MODE_SETTLE_TIME` | Seconds pinches are ignored after leaving another mode. |
+| `SCROLL_SPEED` / `SCROLL_INVERT` | Scroll speed and direction. |
+| `ZOOM_STEP` / `ZOOM_INVERT` | Hand movement per zoom step, and zoom direction. |
+| `SWIPE_DISTANCE` / `SWIPE_WINDOW` | How far (in hand sizes) and how fast a swipe must be. |
+| `SWIPE_COOLDOWN` / `SWIPE_REVERSE_BLOCK` | Pause before the next swipe, and before an opposite swipe. |
+| `POSE_HOLD_TIME` / `PROFILE_HOLD_TIME` / `PAUSE_HOLD_TIME` | How long held poses must be held. |
+| `THUMB_OUT_RATIO` | How far the thumb must stick out for a thumbs up. |
+| `FINGER_EXTENDED_RATIO` | How straight a finger must be to count as raised. |
+| `LOW_LIGHT_LEVEL` | Brightness below which the low light warning shows. |
+| `ALWAYS_ON_TOP` | Keep the camera window above other windows. |
+| `GLOBAL_HOTKEYS` | Enable `Ctrl+Alt+P` / `Ctrl+Alt+Q` (Windows). |
+
+## Troubleshooting
+
+| Problem | Try |
+| --- | --- |
+| "Cannot open webcam" | Close other apps using the camera, or set `CAMERA_INDEX` to 1 or 2. |
+| Cursor shakes when the hand is still | Press `[` a few times, improve lighting, or lower `MIN_CUTOFF`. |
+| Cursor lags behind fast movements | Press `]`, or raise `BETA` gradually. |
+| Can't reach the screen edges | Press `R` to calibrate your reach, or `+` for more sensitivity. |
+| Clicks trigger too early, too late or not at all | Press `C` to calibrate the pinch. Watch the pinch ratio on screen. |
+| Right-click doesn't trigger | Keep your index finger straight up and bring the middle fingertip to the thumb. Press `D` to check the finger states, or lower `MIDDLE_REACH_RATIO`. |
+| Double-click doesn't register | Pinch faster, or raise the double-click speed setting in Windows mouse settings. |
+| Swipes don't trigger | Flick faster, or lower `SWIPE_DISTANCE`. Make sure the status shows `SWIPE` first. |
+| Gestures are misread | Press `D` to see how each finger is read (`+` up, `-` folded, `~` in between). Keep your palm facing the camera. |
+| Low FPS or lag | Set `MODEL_COMPLEXITY` to 0, close other camera apps, and improve lighting (dim light lowers the camera frame rate). |
+| "Low light" warning | Face a light source. Avoid a bright window behind you. |
+| AirControl does something unexpected | Hold both palms open or press `Ctrl+Alt+P` to pause. |
+
+## Testing
+
+The gesture logic is covered by unit tests that use synthetic hand landmarks, so they need no webcam:
+
+```bash
+python -m unittest discover tests
+```
+
+To test gestures live, press `D` in the camera window. It shows the detected pose, each finger's state and the hand size. Use it to check how gestures are read under different lighting, distances and angles.
 
 ## Safety
 
-AirControl controls your actual mouse, so use it carefully.
+AirControl controls your real mouse and keyboard.
 
-- Keep `pyautogui.FAILSAFE = True`.
-- Moving the cursor to the top-left corner of the screen can trigger PyAutoGUI's emergency fail-safe.
-- Avoid running the application while performing sensitive operations.
-- Close the application when you are finished testing.
+- Keep the PyAutoGUI fail-safe enabled. Moving the mouse to the top-left corner stops AirControl.
+- Pause AirControl (both palms, `P` or `Ctrl+Alt+P`) when you're not using it, and before sensitive operations.
+- Mouse buttons held for dragging are released when you pause, lose tracking, lose the camera or quit.
 
 ## Project Structure
 
 ```text
 AirControl/
-├── .venv/             # Local virtual environment (not committed)
-├── main.py            # Main hand-tracking and mouse-control logic
-├── README.md          # Project documentation
-└── .gitignore         # Files excluded from Git
+├── main.py                  # Hand tracking, gestures and mouse/keyboard control
+├── settings.example.json    # Example gesture and tuning settings
+├── requirements.txt         # Python dependencies
+├── tests/
+│   └── test_gestures.py     # Unit tests for the gesture logic
+├── README.md
+└── .gitignore
 ```
 
-The exact files in your repository may differ as development continues.
-
-## Current Status
-
-AirControl is under active development. Current work focuses on improving cursor stability, reducing tracking jitter, and making pinch-to-click interactions more reliable.
-
-## Future Improvements
-
-- Cursor calibration and configurable sensitivity.
-- Improved pinch detection and click reliability.
-- Support for additional hand gestures.
-- Performance and usability improvements.
+`calibration.json` and `settings.json` are created locally and not committed.
 
 ## Contributing
 
-Contributions, suggestions, and bug reports are welcome.
-
-If you want to improve AirControl, consider testing cursor accuracy, measuring click reliability, or improving the hand-tracking pipeline.
+Contributions, suggestions and bug reports are welcome. The most useful contributions are live testing under different lighting, cameras and hand sizes, and reports of gestures that are misread.
 
 ## License
 

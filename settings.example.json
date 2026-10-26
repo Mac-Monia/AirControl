@@ -1,0 +1,39 @@
+{
+  "profile": "navigate",
+  "tuning": {
+    "CAMERA_INDEX": 0,
+    "MODEL_COMPLEXITY": 1,
+    "MIN_CUTOFF": 0.6,
+    "BETA": 0.007,
+    "SCROLL_SPEED": 2500,
+    "SCROLL_INVERT": false,
+    "SWIPE_DISTANCE": 0.9,
+    "POSE_HOLD_TIME": 0.6,
+    "ALWAYS_ON_TOP": false
+  },
+  "gestures": {
+    "all": {
+      "thumbs_up": {"action": "playpause", "label": "Play / pause"},
+      "rock": {"action": "profile:next", "label": "Next profile"}
+    },
+    "navigate": {
+      "swipe_left": {"action": "alt+right", "label": "Forward"},
+      "swipe_right": {"action": "alt+left", "label": "Back"},
+      "swipe_up": {"action": "ctrl+tab", "label": "Next tab"},
+      "swipe_down": {"action": "ctrl+shift+tab", "label": "Previous tab"}
+    },
+    "media": {
+      "swipe_left": {"action": "nexttrack", "label": "Next track"},
+      "swipe_right": {"action": "prevtrack", "label": "Previous track"},
+      "swipe_up": {"action": "volumeup*5", "label": "Volume up"},
+      "swipe_down": {"action": "volumedown*5", "label": "Volume down"}
+    },
+    "slides": {
+      "swipe_left": {"action": "right", "label": "Next slide"},
+      "swipe_right": {"action": "left", "label": "Previous slide"},
+      "swipe_up": {"action": "shift+f5", "label": "Start slideshow"},
+      "swipe_down": {"action": "esc", "label": "End slideshow"},
+      "thumbs_up": {"action": "b", "label": "Black screen"}
+    }
+  }
+}

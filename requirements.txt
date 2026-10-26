@@ -1,0 +1,4 @@
+# mediapipe also installs OpenCV (opencv-contrib-python) and NumPy.
+# Pinned to versions tested with AirControl's mp.solutions hand tracking.
+mediapipe==0.10.21
+PyAutoGUI==0.9.54
